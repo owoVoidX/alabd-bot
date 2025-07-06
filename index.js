@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 // استيراد المكتبات الأساسية
 const { Client, GatewayIntentBits, Collection } = require('discord.js');
 const { token } = require('./config.json'); // لاستيراد التوكن من config.json
@@ -57,6 +58,16 @@ client.on('interactionCreate', async interaction => {
             await interaction.reply({ content: 'حدث خطأ أثناء تنفيذ هذا الأمر!', ephemeral: true });
         }
     }
+=======
+const Discord = require("discord.js");
+const token = process.env.TOKEN; // قراءة التوكن من متغيرات البيئة
+const client = new Discord.Client({ // <--- هنا التعديل المهم
+    intents: [
+        Discord.GatewayIntentBits.Guilds,
+        Discord.GatewayIntentBits.GuildMessages, // تعديل هنا، يبدو أنك كتبتها GuildMessage
+        Discord.GatewayIntentBits.MessageContent,
+    ],
+>>>>>>> 6b4654158dfe2e8315db94f81bd0b770f33db206
 });
 
 // ====== الخطوة 4: حدث جاهزية البوت (عند الاتصال) ======
