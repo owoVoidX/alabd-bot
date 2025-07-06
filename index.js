@@ -1,6 +1,5 @@
 const Discord = require("discord.js");
-const { token } = require("./config.json"); // انتبه لـ config.json وليس confing.json كما كتبتها
-
+const token = process.env.TOKEN; // قراءة التوكن من متغيرات البيئة
 const client = new Discord.Client({ // <--- هنا التعديل المهم
     intents: [
         Discord.GatewayIntentBits.Guilds,
