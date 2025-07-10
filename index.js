@@ -1,4 +1,5 @@
-const { Client, GatewayIntentBits, Collection, PermissionsBitField } = require('discord.js');
+const { Client, GatewayIntentBits, Collection, PermissionsBitField, ChannelType } = require('discord.js'); // إضافة ChannelType هنا
+
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -8,11 +9,14 @@ require('dotenv').config();
 // قراءة توكن البوت من ملف .env
 const discordToken = process.env.DISCORD_TOKEN;
 
-// --- تهيئة Google Gemini API ---
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+// --- تهيئة Hugging Face Inference Client ---
+const { InferenceClient } = require("@huggingface/inference");
 
-const gemini = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const geminiModel = gemini.getGenerativeModel({ model: "gemini-1.5-flash" }); // تأكد أن هذا هو gemini-1.5-flash
+// قم بتهيئة العميل باستخدام التوكن من .env
+const hf = new InferenceClient(process.env.HF_TOKEN);
+
+// اسم النموذج الذي نريد استخدامه من Hugging Face
+const HF_MODEL = "mistralai/Mistral-7B-Instruct-v0.3";
 
 // --- تهيئة عميل Discord (Client) ---
 const client = new Client({
@@ -35,30 +39,30 @@ try {
 }
 
 for (const folder of commandFolders) {
-    const commandsPathInFolder = path.join(foldersPath, folder); // يجب أن يكون المتغير مختلفاً لتجنب الالتباس
-    const commandFiles = fs.readdirSync(commandsPathInFolder).filter(file => file.endsWith('.js'));
+    const commandsPath = path.join(foldersPath, folder);
+    const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
     for (const file of commandFiles) {
-        const filePath = path.join(commandsPathInFolder, file);
-        try {
-            const command = require(filePath);
-            if ('data' in command && 'execute' in command) {
-                client.commands.set(command.data.name, command);
-            } else {
-                console.warn(`[تحذير] الأمر في ${filePath} مفقود منه خاصية "data" أو "execute" المطلوبة.`);
-            }
-        } catch (error) {
-            console.error(`خطأ أثناء تحميل الأمر من ${filePath}:`, error);
+        const filePath = path.join(commandsPath, file);
+        const command = require(filePath);
+        if ('data' in command && 'execute' in command) {
+            client.commands.set(command.data.name, command);
+        } else {
+            console.log(`[تحذير] الأمر في ${filePath} مفقود منه خاصية "data" أو "execute" المطلوبة.`);
         }
     }
 }
 
+// --- معالجة أوامر السلاش (interactionCreate) ---
 client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
+
     const command = client.commands.get(interaction.commandName);
+
     if (!command) {
         console.error(`لم يتم العثور على أمر يطابق ${interaction.commandName}.`);
         return;
     }
+
     try {
         await command.execute(interaction);
     } catch (error) {
@@ -71,36 +75,34 @@ client.on('interactionCreate', async interaction => {
     }
 });
 
+
 // --- معالجة الرسائل العادية (messageCreate) للذكاء الاصطناعي ---
 client.on('messageCreate', async message => {
+    // تجاهل رسائل البوتات
     if (message.author.bot) {
         console.log("الرسالة من بوت، تم تجاهلها.");
         return;
     }
 
     console.log("تم استدعاء معالج messageCreate.");
-    console.log("نوع القناة:", message.channel.type);
 
-    // للتأكد من أن البوت يرد فقط عندما يتم منشنته في السيرفرات (نوع القناة 0 يعني قناة نصية في السيرفر)
-    if (message.channel.type === 0 && message.mentions.users.has(client.user.id)) {
+    // التحقق مما إذا كانت الرسالة في سيرفر (وليست قناة خاصة DM)
+    // ومما إذا كانت تحتوي على منشن للبوت
+    if (message.channel.type === ChannelType.GuildText && message.mentions.users.has(client.user.id)) {
         console.log("تلقيت منشن في سيرفر من:", message.author.tag, "المحتوى:", message.content);
 
-        // --- الكود الجديد هنا للتحقق من صلاحية المسؤول ---
-        // تأكد أن الرسالة جاءت من عضو في السيرفر (وليس من رسالة خاصة مثلاً)
-        if (!message.member) {
-            console.log("الرسالة ليست من عضو في سيرفر (DM)، لا يمكن التحقق من الصلاحيات. تم تجاهلها.");
-            return;
-        }
+        // **هنا هو التعديل الأساسي للتحقق من صلاحية المسؤول (Administrator)**
+        // الحصول على عضو السيرفر (GuildMember) الذي أرسل الرسالة
+        const member = message.guild.members.cache.get(message.author.id);
 
-        // التحقق مما إذا كان العضو لديه صلاحية المسؤول (Administrator)
-        if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-            console.log(`المستخدم ${message.author.tag} حاول استخدام الذكاء الاصطناعي لكنه لا يملك صلاحية المسؤول.`);
-            // يمكنك هنا إضافة رد قصير للمستخدم يخبره بأنه لا يملك الصلاحية،
-            // مثال: await message.reply("عذراً، أنت لا تملك الصلاحيات اللازمة لاستخدام الذكاء الاصطناعي.");
-            // لكن بما أنك طلبت "ما يكتب شيء"، فسنكتفي بالـ return.
-            return; // إيقاف التنفيذ إذا لم يكن لديه الصلاحية
+        // التحقق مما إذا كان العضو موجودًا ولديه صلاحية Administrator
+        if (!member || !member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+            console.log(`المستخدم ${message.author.tag} حاول استخدام البوت ولكنه ليس مسؤولاً. تم التجاهل.`);
+            // يمكنك هنا إرسال رسالة للمستخدم تعلمه بأنه لا يملك الصلاحية، أو تتجاهله تمامًا.
+            // إذا أردت إرسال رسالة:
+            // await message.reply("عذراً، فقط المشرفون يمكنهم استخدام الذكاء الاصطناعي الخاص بي في الوقت الحالي.");
+            return; // تجاهل الرسالة إذا لم يكن المستخدم مشرفاً
         }
-        // --- نهاية الكود الجديد ---
 
         const prompt = message.content.replace(`<@${client.user.id}>`, '').trim();
 
@@ -110,21 +112,32 @@ client.on('messageCreate', async message => {
         }
 
         try {
-            await message.channel.sendTyping(); // يظهر أن البوت يكتب
+            await message.channel.sendTyping();
 
-            // إرسال الطلب إلى Google Gemini API
-            const result = await geminiModel.generateContent(prompt);
-            const response = await result.response;
-            const text = response.text();
+            // إعداد الرسائل لتمريرها إلى hf.chatCompletion
+            const messages = [
+                { role: "user", content: prompt }
+            ];
 
-            let aiResponse = "عذراً، لم أستطع الحصول على رد مفهوم من الذكاء الاصطناعي من Gemini.";
-            if (text) {
-                aiResponse = text;
+            // استدعاء chatCompletion باستخدام InferenceClient
+            const chatCompletion = await hf.chatCompletion({
+                model: HF_MODEL,
+                messages: messages,
+            });
+
+            let aiResponse = "عذراً، لم أستطع الحصول على رد مفهوم من الذكاء الاصطناعي من Hugging Face.";
+
+            if (chatCompletion.choices && chatCompletion.choices.length > 0 && chatCompletion.choices[0].message && chatCompletion.choices[0].message.content) {
+                aiResponse = chatCompletion.choices[0].message.content.trim();
+
+                // تنظيف الرد من أي تكرار للمدخلات أو علامات خاصة بالنموذج
+                aiResponse = aiResponse.replace(/\[INST\].*?\[\/INST\]/g, '').trim();
+                aiResponse = aiResponse.replace(/<\|user\|>.*?<\|assistant\|>/g, '').trim();
+
             } else {
-                console.log("استجابة غير متوقعة من Gemini:", response);
+                console.log("استجابة غير متوقعة من Hugging Face:", chatCompletion);
             }
 
-            // لضمان أن الرد لا يتجاوز الحد الأقصى لرسائل ديسكورد (2000 حرف)
             if (aiResponse.length > 2000) {
                 aiResponse = aiResponse.substring(0, 1997) + "...";
             }
@@ -132,24 +145,36 @@ client.on('messageCreate', async message => {
             await message.reply(aiResponse);
 
         } catch (error) {
-            console.error('حدث خطأ أثناء الاتصال بـ Gemini API:', error);
-            let userErrorMessage = 'عذراً، حدث خطأ أثناء معالجة طلبك مع الذكاء الاصطناعي من Gemini. يرجى المحاولة لاحقاً.';
+            console.error('حدث خطأ أثناء الاتصال بـ Hugging Face API:', error);
+            let userErrorMessage = 'عذراً، حدث خطأ أثناء معالجة طلبك مع الذكاء الاصطناعي من Hugging Face.';
+
+            // التعامل مع الأخطاء من InferenceClient
+            if (error.status) { // الأخطاء من HTTP
+                if (error.status === 401) {
+                    userErrorMessage = 'عذراً، يبدو أن مفتاح Hugging Face Token غير صالح. يرجى التحقق من ملف .env.';
+                } else if (error.status === 503) {
+                    userErrorMessage = 'عذراً، النموذج قيد التحميل على Hugging Face (503 Service Unavailable). يرجى المحاولة مرة أخرى بعد لحظات.';
+                } else if (error.status === 400 && error.message.includes("Model not found")) {
+                    userErrorMessage = `عذراً، النموذج "${HF_MODEL}" غير موجود أو غير متاح على Hugging Face Inference API.`;
+                } else {
+                    userErrorMessage = `عذراً، حدث خطأ من Hugging Face API: ${error.status} - ${error.message}`;
+                }
+            } else { // أخطاء أخرى
+                userErrorMessage = `عذراً، حدث خطأ غير متوقع: ${error.message}`;
+            }
             await message.reply(userErrorMessage);
         }
-    } else if (message.channel.type === 1) { // نوع القناة 1 يعني رسالة خاصة (DM)
-        console.log("تلقيت رسالة خاصة في DM. تم تجاهلها.");
-        // يمكنك هنا اختيار ما إذا كنت تريد أن يرد البوت في الرسائل الخاصة أم لا
-        // await message.reply("أنا بوت ديسكورد، يرجى منشنني في سيرفر لكي أرد عليك.");
+    } else if (message.channel.type === ChannelType.DM) { // تم تغيير 1 إلى ChannelType.DM
+        console.log("تلقيت رسالة خاصة في DM، تم تجاهلها بناءً على طلبك.");
     } else {
-        // رسائل في السيرفر لم يتم منشن البوت فيها
         console.log("رسالة في السيرفر لم يتم منشني فيها. القناة ID:", message.channel.id);
     }
 });
 
-// ====== حدث جاهزية البوت (عند الاتصال) ======
+// --- عند جاهزية البوت ---
 client.once('ready', () => {
     console.log(`✅ ${client.user.tag} جاهز للعمل!`);
 });
 
-// ====== تسجيل دخول البوت ======
-client.login(discordToken);
+// --- تسجيل الدخول بالتوكن ---
+client.login(discordToken); 
