@@ -275,7 +275,8 @@ client.on(Events.MessageCreate, async message => {
                 return message.reply('كيف يمكنني مساعدتك؟ اطرح سؤالك بعد المنشن.');
             }
         } else {
-            return message.reply('مرحباً! أنا جاهز للمساعدة، لكن وظائف الذكاء الاصطناعي غير متوفرة حالياً.');
+            // هذا الجزء تم حذفه
+            return;
         }
 
     } else if (message.reference && message.reference.messageId) {
@@ -289,7 +290,8 @@ client.on(Events.MessageCreate, async message => {
                         return message.reply('من فضلك، اكتب سؤالك أو تعليقك بعد الرد على رسالتي.');
                     }
                 } else {
-                    return message.reply('مرحباً! أنا جاهز للمساعدة، لكن وظائف الذكاء الاصطناعي غير متوفرة حالياً.');
+                    // هذا الجزء تم حذفه
+                    return;
                 }
             }
         } catch (error) {
