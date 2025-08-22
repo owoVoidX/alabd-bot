@@ -1,45 +1,55 @@
-const { Client, GatewayIntentBits, Collection, PermissionsBitField, ChannelType } = require('discord.js'); // إضافة ChannelType هنا
-
-const fs = require('node:fs');
+// index.js
+const {
+    Client, Events, GatewayIntentBits, Collection,
+    PermissionsBitField, EmbedBuilder, ActionRowBuilder,
+    ButtonBuilder, ButtonStyle
+} = require('discord.js');
 const path = require('node:path');
-
-// هذا السطر يقوم بتحميل المتغيرات من ملف .env
-require('dotenv').config();
-
-// قراءة توكن البوت من ملف .env
-const discordToken = process.env.DISCORD_TOKEN;
-
-// --- تهيئة Hugging Face Inference Client ---
+const fs = require('node:fs');
 const { InferenceClient } = require("@huggingface/inference");
 
-// قم بتهيئة العميل باستخدام التوكن من .env
-const hf = new InferenceClient(process.env.HF_TOKEN);
+require('dotenv').config();
 
-// اسم النموذج الذي نريد استخدامه من Hugging Face
-const HF_MODEL = "mistralai/Mistral-7B-Instruct-v0.3";
-
-// --- تهيئة عميل Discord (Client) ---
+// 1. تهيئة Discord Client
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.MessageContent
     ],
 });
 
-// --- تحميل أوامر السلاش (اختياري) ---
+// Collections لإدارة أوامر السلاش والأوامر النصية
 client.commands = new Collection();
+client.prefixCommands = new Collection();
 
-const foldersPath = path.join(__dirname, 'slash', 'commands');
-let commandFolders = [];
-try {
-    commandFolders = fs.readdirSync(foldersPath);
-} catch (error) {
-    console.warn(`[تحذير] مجلد الأوامر "${foldersPath}" غير موجود أو لا يمكن قراءته. قد لا تعمل أوامر السلاش.`);
+// 2. تهيئة Hugging Face Inference Client
+const HF_TOKEN = process.env.HF_TOKEN;
+const HF_CHAT_PROVIDER = "novita";
+const HF_CHAT_MODEL = "moonshotai/Kimi-K2-Instruct";
+
+if (!HF_TOKEN) {
+    console.error("خطأ: لم يتم تعيين متغير البيئة HF_TOKEN في ملف .env. لن يعمل تكامل Hugging Face AI.");
+} else {
+    client.hfInferenceClient = new InferenceClient(HF_TOKEN);
+    console.log("✅ تم تهيئة Hugging Face Inference Client بنجاح.");
 }
 
-for (const folder of commandFolders) {
-    const commandsPath = path.join(foldersPath, folder);
+// 3. جزء تحميل أوامر السلاش
+const slashCommandsPath = path.join(__dirname, 'slash', 'commands');
+let slashCommandFolders = [];
+try {
+    slashCommandFolders = fs.readdirSync(slashCommandsPath);
+} catch (error) {
+    console.warn(`[تحذير] مجلد أوامر السلاش "${slashCommandsPath}" غير موجود أو لا يمكن قراءته:`, error.message);
+    slashCommandFolders = [];
+}
+
+for (const folder of slashCommandFolders) {
+    const commandsPath = path.join(slashCommandsPath, folder);
+    if (!fs.lstatSync(commandsPath).isDirectory()) {
+        continue;
+    }
     const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
     for (const file of commandFiles) {
         const filePath = path.join(commandsPath, file);
@@ -47,134 +57,269 @@ for (const folder of commandFolders) {
         if ('data' in command && 'execute' in command) {
             client.commands.set(command.data.name, command);
         } else {
-            console.log(`[تحذير] الأمر في ${filePath} مفقود منه خاصية "data" أو "execute" المطلوبة.`);
+            console.log(`[تحذير] أمر السلاش في ${filePath} مفقود منه خاصية "data" أو "execute" المطلوبة.`);
         }
     }
 }
 
-// --- معالجة أوامر السلاش (interactionCreate) ---
-client.on('interactionCreate', async interaction => {
-    if (!interaction.isChatInputCommand()) return;
+// 4. جزء تحميل الأوامر النصية (Prefix Commands)
+const prefixCommandsPath = path.join(__dirname, 'prefix_commands');
 
-    const command = client.commands.get(interaction.commandName);
-
-    if (!command) {
-        console.error(`لم يتم العثور على أمر يطابق ${interaction.commandName}.`);
-        return;
-    }
-
+const gamesManagerFile = path.join(prefixCommandsPath, 'games_manager.js');
+if (fs.existsSync(gamesManagerFile)) {
     try {
-        await command.execute(interaction);
-    } catch (error) {
-        console.error(error);
-        if (interaction.replied || interaction.deferred) {
-            await interaction.followUp({ content: 'حدث خطأ أثناء تنفيذ هذا الأمر!', ephemeral: true });
+        const gamesManager = require(gamesManagerFile);
+        if (gamesManager.commands && Array.isArray(gamesManager.commands)) {
+            for (const command of gamesManager.commands) {
+                if ('name' in command && 'execute' in command) {
+                    client.prefixCommands.set(command.name, command);
+                    if (command.aliases && Array.isArray(command.aliases)) {
+                        for (const alias of command.aliases) {
+                            client.prefixCommands.set(alias, command);
+                        }
+                    }
+                } else {
+                    console.log(`[تحذير] الأمر النصي في games_manager.js مفقود منه خاصية "name" أو "execute" المطلوبة.`);
+                }
+            }
+            console.log(`تم تحميل ${gamesManager.commands.length} أمر (أوامر) من games_manager.js.`);
         } else {
-            await interaction.reply({ content: 'حدث خطأ أثناء تنفيذ هذا الأمر!', ephemeral: true });
+            console.log(`[تحذير] ملف games_manager.js لا يصدر مصفوفة "commands" صحيحة.`);
         }
+    } catch (error) {
+        console.error(`[خطأ] فشل في تحميل ملف الألعاب المدمج "${gamesManagerFile}":`, error.message);
     }
+} else {
+    console.warn(`[تحذير] ملف الألعاب المدمج "${gamesManagerFile}" غير موجود.`);
+}
+
+const gameLogicPath = path.join(prefixCommandsPath, 'game_logic');
+let gameLogicFiles = [];
+try {
+    if (fs.existsSync(gameLogicPath) && fs.lstatSync(gameLogicPath).isDirectory()) {
+        gameLogicFiles = fs.readdirSync(gameLogicPath).filter(file => file.endsWith('.js'));
+        for (const file of gameLogicFiles) {
+            const filePath = path.join(gameLogicPath, file);
+            const command = require(filePath);
+            if ('name' in command && 'execute' in command) {
+                client.prefixCommands.set(command.name, command);
+                if (command.aliases && Array.isArray(command.aliases)) {
+                    for (const alias of command.aliases) {
+                        client.prefixCommands.set(alias, command);
+                    }
+                }
+            } else {
+                console.log(`[تحذير] الأمر النصي في ${filePath} مفقود منه خاصية "name" أو "execute" المطلوبة.`);
+            }
+        }
+        console.log(`تم تحميل ${gameLogicFiles.length} أمر (أوامر) من game_logic.`);
+    } else {
+        console.warn(`[تحذير] مجلد game_logic "${gameLogicPath}" غير موجود أو ليس مجلدًا.`);
+    }
+} catch (error) {
+    console.error(`[خطأ] فشل في تحميل أوامر من مجلد game_logic:`, error.message);
+}
+
+// 5. معالجة الأحداث (Events)
+client.once(Events.ClientReady, c => {
+    console.log(`✅ ${c.user.tag} جاهز للعمل!`);
 });
 
+client.on(Events.Error, console.error);
 
-// --- معالجة الرسائل العادية (messageCreate) للذكاء الاصطناعي ---
-client.on('messageCreate', async message => {
-    // تجاهل رسائل البوتات
-    if (message.author.bot) {
-        console.log("الرسالة من بوت، تم تجاهلها.");
-        return;
-    }
+const DISCORD_BOT_TOKEN = process.env.DISCORD_TOKEN;
+if (!DISCORD_BOT_TOKEN) {
+    console.error("خطأ: لم يتم تعيين متغير البيئة DISCORD_BOT_TOKEN في ملف .env.");
+    process.exit(1);
+}
+client.login(DISCORD_BOT_TOKEN);
 
-    console.log("تم استدعاء معالج messageCreate.");
-
-    // التحقق مما إذا كانت الرسالة في سيرفر (وليست قناة خاصة DM)
-    // ومما إذا كانت تحتوي على منشن للبوت
-    if (message.channel.type === ChannelType.GuildText && message.mentions.users.has(client.user.id)) {
-        console.log("تلقيت منشن في سيرفر من:", message.author.tag, "المحتوى:", message.content);
-
-        // **هنا هو التعديل الأساسي للتحقق من صلاحية المسؤول (Administrator)**
-        // الحصول على عضو السيرفر (GuildMember) الذي أرسل الرسالة
-        const member = message.guild.members.cache.get(message.author.id);
-
-        // التحقق مما إذا كان العضو موجودًا ولديه صلاحية Administrator
-        if (!member || !member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-            console.log(`المستخدم ${message.author.tag} حاول استخدام البوت ولكنه ليس مسؤولاً. تم التجاهل.`);
-            // يمكنك هنا إرسال رسالة للمستخدم تعلمه بأنه لا يملك الصلاحية، أو تتجاهله تمامًا.
-            // إذا أردت إرسال رسالة:
-            // await message.reply("عذراً، فقط المشرفون يمكنهم استخدام الذكاء الاصطناعي الخاص بي في الوقت الحالي.");
-            return; // تجاهل الرسالة إذا لم يكن المستخدم مشرفاً
+// 6. معالجة التفاعل (أوامر السلاش والأزرار)
+client.on(Events.InteractionCreate, async interaction => {
+    if (interaction.isChatInputCommand()) {
+        const command = interaction.client.commands.get(interaction.commandName);
+        if (!command) {
+            console.error(`لم يتم العثور على أمر سلاش يطابق ${interaction.commandName}.`);
+            return;
         }
 
-        const prompt = message.content.replace(`<@${client.user.id}>`, '').trim();
-
-        if (!prompt) {
-            await message.reply(`مرحباً ${message.author.username}! كيف يمكنني مساعدتك؟ اذكرني بسؤالك بعد المنشن.`);
+        // هذا الجزء هو فحص صلاحية المسؤول لأوامر السلاش
+        if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+            await interaction.reply({
+                content: 'عذراً، أنت لا تملك صلاحية **المسؤول** لاستخدام هذا الأمر.',
+                ephemeral: true
+            });
             return;
         }
 
         try {
-            await message.channel.sendTyping();
-
-            // إعداد الرسائل لتمريرها إلى hf.chatCompletion
-            const messages = [
-                { role: "user", content: prompt }
-            ];
-
-            // استدعاء chatCompletion باستخدام InferenceClient
-            const chatCompletion = await hf.chatCompletion({
-                model: HF_MODEL,
-                messages: messages,
-            });
-
-            let aiResponse = "عذراً، لم أستطع الحصول على رد مفهوم من الذكاء الاصطناعي من Hugging Face.";
-
-            if (chatCompletion.choices && chatCompletion.choices.length > 0 && chatCompletion.choices[0].message && chatCompletion.choices[0].message.content) {
-                aiResponse = chatCompletion.choices[0].message.content.trim();
-
-                // تنظيف الرد من أي تكرار للمدخلات أو علامات خاصة بالنموذج
-                aiResponse = aiResponse.replace(/\[INST\].*?\[\/INST\]/g, '').trim();
-                aiResponse = aiResponse.replace(/<\|user\|>.*?<\|assistant\|>/g, '').trim();
-
-            } else {
-                console.log("استجابة غير متوقعة من Hugging Face:", chatCompletion);
-            }
-
-            if (aiResponse.length > 2000) {
-                aiResponse = aiResponse.substring(0, 1997) + "...";
-            }
-
-            await message.reply(aiResponse);
-
+            await command.execute(interaction);
         } catch (error) {
-            console.error('حدث خطأ أثناء الاتصال بـ Hugging Face API:', error);
-            let userErrorMessage = 'عذراً، حدث خطأ أثناء معالجة طلبك مع الذكاء الاصطناعي من Hugging Face.';
-
-            // التعامل مع الأخطاء من InferenceClient
-            if (error.status) { // الأخطاء من HTTP
-                if (error.status === 401) {
-                    userErrorMessage = 'عذراً، يبدو أن مفتاح Hugging Face Token غير صالح. يرجى التحقق من ملف .env.';
-                } else if (error.status === 503) {
-                    userErrorMessage = 'عذراً، النموذج قيد التحميل على Hugging Face (503 Service Unavailable). يرجى المحاولة مرة أخرى بعد لحظات.';
-                } else if (error.status === 400 && error.message.includes("Model not found")) {
-                    userErrorMessage = `عذراً، النموذج "${HF_MODEL}" غير موجود أو غير متاح على Hugging Face Inference API.`;
-                } else {
-                    userErrorMessage = `عذراً، حدث خطأ من Hugging Face API: ${error.status} - ${error.message}`;
-                }
-            } else { // أخطاء أخرى
-                userErrorMessage = `عذراً، حدث خطأ غير متوقع: ${error.message}`;
+            console.error('حدث خطأ أثناء تنفيذ أمر السلاش:', error);
+            if (interaction.deferred || interaction.replied) {
+                await interaction.editReply({
+                    content: 'عذراً، حدث خطأ أثناء تنفيذ هذا الأمر. يرجى المحاولة مرة أخرى لاحقاً.',
+                    ephemeral: true
+                }).catch(e => console.error('فشل في تحرير الرد الأولي بعد الخطأ:', e));
+            } else {
+                await interaction.reply({
+                    content: 'عذراً، حدث خطأ أثناء تنفيذ هذا الأمر. يرجى المحاولة مرة أخرى لاحقاً.',
+                    ephemeral: true
+                }).catch(e => console.error('فشل في الرد على التفاعل بعد الخطأ:', e));
             }
-            await message.reply(userErrorMessage);
         }
-    } else if (message.channel.type === ChannelType.DM) { // تم تغيير 1 إلى ChannelType.DM
-        console.log("تلقيت رسالة خاصة في DM، تم تجاهلها بناءً على طلبك.");
-    } else {
-        console.log("رسالة في السيرفر لم يتم منشني فيها. القناة ID:", message.channel.id);
+    } else if (interaction.isButton()) {
+        // تم حذف فحص صلاحية المسؤول هنا للسماح للجميع باستخدام الأزرار
+
+        if (interaction.customId.startsWith('xo_')) {
+            const xoGame = client.prefixCommands.get('xo');
+            if (xoGame && xoGame.handleButtonInteraction) {
+                await xoGame.handleButtonInteraction(interaction);
+            } else {
+                console.warn('لم يتم العثور على معالج زر لـ XO أو أنه غير معرف. Custom ID:', interaction.customId);
+                await interaction.reply({ content: 'لا يمكن معالجة هذا التفاعل حالياً.', ephemeral: true }).catch(e => console.error('فشل في الرد على تفاعل الزر:', e));
+            }
+        }
+        
+        // معالجة الأزرار الخاصة بأمر !info
+        if (interaction.customId === 'server_info') {
+            await interaction.reply({
+                content: 'هنا يأتي شرح السيرفر...',
+                ephemeral: true
+            });
+        } else if (interaction.customId === 'about_sop') {
+            await interaction.reply({
+                content: 'هذه معلومات إضافية عن SOP...',
+                ephemeral: true
+            });
+        }
     }
 });
 
-// --- عند جاهزية البوت ---
-client.once('ready', () => {
-    console.log(`✅ ${client.user.tag} جاهز للعمل!`);
-});
+// 7. معالجة الرسائل (الأوامر النصية ودمج Hugging Face AI)
+client.on(Events.MessageCreate, async message => {
+    if (message.author.bot) return;
 
-// --- تسجيل الدخول بالتوكن ---
-client.login(discordToken); 
+    // تم حذف فحص صلاحية المسؤول من هنا
+
+    const prefix = process.env.PREFIX || '-';
+    const botMention = new RegExp(`^<@!?${client.user.id}>`);
+    let userPrompt = '';
+    let isAITriggered = false;
+
+    // 🟢 إضافة أمر !info هنا
+    if (message.content === '!info') {
+        const infoEmbed = new EmbedBuilder()
+            .setColor('#7c62ee')
+            .setTitle('معلومات سيرفر SOP')
+            .setDescription('يمكنك معرفة كل ما يخص السيرفر عن طريق ضغط الأزرار التي بالأسفل')
+            .setAuthor({
+                name: 'SOP-Bot-System',
+                iconURL: 'https://i.imgur.com/your_bot_profile_image.png',
+            })
+            .setThumbnail('https://i.imgur.com/bKj1T6R.png')
+            .setImage('https://i.imgur.com/qLzRk13.png');
+
+        const serverInfoButton = new ButtonBuilder()
+            .setCustomId('server_info')
+            .setLabel('شرح السيرفر')
+            .setStyle(ButtonStyle.Blurple)
+            .setEmoji('📖');
+
+        const aboutSopButton = new ButtonBuilder()
+            .setCustomId('about_sop')
+            .setLabel('about sop')
+            .setStyle(ButtonStyle.Secondary)
+            .setEmoji('🙂');
+
+        const row = new ActionRowBuilder().addComponents(serverInfoButton, aboutSopButton);
+
+        await message.channel.send({
+            embeds: [infoEmbed],
+            components: [row],
+        });
+        return; // مهم جداً لإيقاف الكود هنا
+    }
+    
+    // الأوامر النصية الأخرى
+    if (message.content.startsWith(prefix)) {
+        const args = message.content.slice(prefix.length).trim().split(/ +/);
+        const commandName = args.shift().toLowerCase();
+        const command = client.prefixCommands.get(commandName);
+
+        if (!command) {
+            if (client.hfInferenceClient && (commandName === 'hf' || commandName === 'ai' || commandName === 'ask')) {
+                userPrompt = args.join(' ');
+                isAITriggered = true;
+                if (!userPrompt) {
+                    return message.reply('من فضلك، اطرح سؤالاً بعد `' + prefix + commandName + '`.');
+                }
+            } else {
+                return;
+            }
+        } else {
+            try {
+                await command.execute(message, args);
+            } catch (error) {
+                console.error(`حدث خطأ أثناء تنفيذ الأمر النصي "${commandName}":`, error);
+                await message.reply('عذراً، حدث خطأ أثناء تنفيذ هذا الأمر.');
+            }
+            return;
+        }
+
+    } else if (botMention.test(message.content)) {
+        if (client.hfInferenceClient) {
+            userPrompt = message.content.replace(botMention, '').trim();
+            isAITriggered = true;
+            if (!userPrompt) {
+                return message.reply('كيف يمكنني مساعدتك؟ اطرح سؤالك بعد المنشن.');
+            }
+        } else {
+            return message.reply('مرحباً! أنا جاهز للمساعدة، لكن وظائف الذكاء الاصطناعي غير متوفرة حالياً.');
+        }
+
+    } else if (message.reference && message.reference.messageId) {
+        try {
+            const repliedToMessage = await message.channel.messages.fetch(message.reference.messageId);
+            if (repliedToMessage.author.id === client.user.id) {
+                if (client.hfInferenceClient) {
+                    userPrompt = message.content.trim();
+                    isAITriggered = true;
+                    if (!userPrompt) {
+                        return message.reply('من فضلك، اكتب سؤالك أو تعليقك بعد الرد على رسالتي.');
+                    }
+                } else {
+                    return message.reply('مرحباً! أنا جاهز للمساعدة، لكن وظائف الذكاء الاصطناعي غير متوفرة حالياً.');
+                }
+            }
+        } catch (error) {
+            console.error("❌ حدث خطأ عند جلب الرسالة التي تم الرد عليها:", error);
+        }
+    }
+
+    if (!isAITriggered) {
+        return;
+    }
+
+    if (userPrompt) {
+        message.channel.sendTyping();
+
+        try {
+            const chatCompletion = await client.hfInferenceClient.chatCompletion({
+                provider: HF_CHAT_PROVIDER,
+                model: HF_CHAT_MODEL,
+                messages: [{ role: "user", content: userPrompt }],
+            });
+
+            if (chatCompletion && chatCompletion.choices && chatCompletion.choices[0] && chatCompletion.choices[0].message) {
+                message.reply({ content: chatCompletion.choices[0].message.content });
+            } else {
+                message.reply('عذراً، لم أتلق ردًا مفهومًا من نموذج Hugging Face.');
+            }
+
+        } catch (error) {
+            console.error('❌ خطأ في استدعاء Hugging Face AI:', error);
+            message.reply('عذراً، حدث خطأ أثناء التواصل مع Hugging Face AI. الرجاء المحاولة لاحقاً.');
+        }
+    }
+});

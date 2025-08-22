@@ -1,52 +1,59 @@
+// deploy-commands.js
 const { REST, Routes } = require('discord.js');
 const fs = require('node:fs');
 const path = require('node:path');
-const { clientId, guildId, token } = require('./config.json'); // استيراد البيانات من config.json
+require('dotenv').config(); // تأكد من تحميل .env
 
 const commands = [];
-// جلب جميع ملفات الأوامر من مجلدات الأوامر
-const foldersPath = path.join(__dirname, 'slash', 'commands'); // مسار مجلد أوامر السلاش
-const commandFolders = fs.readdirSync(foldersPath); // قراءة المجلدات الفرعية
+// Grab all the command folders from the commands directory you created earlier
+const foldersPath = path.join(__dirname, 'slash', 'commands'); // هذا المسار صحيح لأوامر السلاش
+let commandFolders = [];
+try {
+    commandFolders = fs.readdirSync(foldersPath);
+} catch (error) {
+    console.warn(`[تحذير] مجلد أوامر السلاش "${foldersPath}" غير موجود أو لا يمكن قراءته. لن يتم نشر أوامر سلاش.`, error.message);
+    commandFolders = []; // تأكد من أنها مصفوفة فارغة لتجنب الأخطاء لاحقاً
+}
+
 
 for (const folder of commandFolders) {
     const commandsPath = path.join(foldersPath, folder);
+    // تأكد أن ما نقوم بقرائته هو مجلد فعلاً
+    if (!fs.lstatSync(commandsPath).isDirectory()) {
+        console.log(`[تحذير] تم العثور على ملف غير مجلد في ${commandsPath}. تم تخطيه.`);
+        continue; // تخطى إذا لم يكن مجلداً
+    }
     const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
     for (const file of commandFiles) {
         const filePath = path.join(commandsPath, file);
         const command = require(filePath);
         if ('data' in command && 'execute' in command) {
-            commands.push(command.data.toJSON()); // إضافة بيانات الأمر بصيغة JSON
+            commands.push(command.data.toJSON());
         } else {
-            console.warn(`[تحذير] الأمر في ${filePath} يفتقد خاصية 'data' أو 'execute' المطلوبة.`);
+            console.log(`[تحذير] الأمر في ${filePath} مفقود منه خاصية "data" أو "execute" المطلوبة.`);
         }
     }
 }
 
-// بناء REST و Routes
-const rest = new REST().setToken(token);
+// Construct and prepare an instance of the REST module
+const rest = new REST().setToken(process.env.DISCORD_TOKEN);
 
-// تسجيل الأوامر
+// Deploy your commands!
 (async () => {
     try {
-        console.log(`بدء تحديث ${commands.length} أوامر تطبيق (/).`);
+        console.log(`بدأ تحديث ${commands.length} أمر (أوامر) تطبيق (سلاش).`);
 
-        // يمكنك تسجيلها عالميًا (لجميع الخوادم) أو لخادم معين (للتطوير)
-        // اختر أحد الخيارين:
-
-        // 1. تسجيل عالمي (سيستغرق الأمر وقتًا ليظهر في جميع الخوادم)
-        // const data = await rest.put(
-        //     Routes.applicationCommands(clientId),
-        //     { body: commands },
-        // );
-
-        // 2. تسجيل لخادم معين (أسرع للتطوير، يظهر فقط في الخادم المحدد بـ guildId)
+        // The put method is used to fully refresh all commands in the guild with the current set
+        // يمكنك استخدام Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID) لنشرها في سيرفر معين للاختبار
+        // أو Routes.applicationCommands(CLIENT_ID) لنشرها عامة (قد يستغرق وقتاً)
         const data = await rest.put(
-            Routes.applicationGuildCommands(clientId, guildId),
+            Routes.applicationCommands(process.env.CLIENT_ID), // لنشر الأوامر عامة
             { body: commands },
         );
 
-        console.log(`تم إعادة تحميل ${data.length} أوامر تطبيق (/).`);
+        console.log(`تم إعادة تحميل ${data.length} أمر (أوامر) تطبيق (سلاش) بنجاح.`);
     } catch (error) {
-        console.error(error);
+        // And of course, make sure you catch and log any errors!
+        console.error('فشل في نشر أوامر السلاش:', error);
     }
 })();

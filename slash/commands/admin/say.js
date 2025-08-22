@@ -1,24 +1,20 @@
-const { SlashCommandBuilder } = require('discord.js');
+// slash/commands/admin/say.js
+const { SlashCommandBuilder, PermissionsBitField } = require('discord.js'); // تأكد من استيراد PermissionsBitField
+
 
 module.exports = {
-    // بيانات الأمر تبقى كما هي
     data: new SlashCommandBuilder()
         .setName('say')
         .setDescription('اجعل البوت يقول رسالة معينة.')
+        .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator) // <--- هذا هو السطر المهم
         .addStringOption(option =>
             option.setName('message')
                 .setDescription('الرسالة التي تريد أن يقولها البوت.')
                 .setRequired(true)
         ),
-    
-    // دالة التنفيذ مع التعديل
     async execute(interaction) {
-        const messageToSay = interaction.options.getString('message'); // الحصول على الرسالة من المستخدم
-
-        // الخطوة 1: الرد برسالة تأكيد مؤقتة (ephemeral) مرئية لك فقط
+        const messageToSay = interaction.options.getString('message');
         await interaction.reply({ content: 'تم إرسال رسالتك بواسطة البوت!', ephemeral: true });
-
-        // الخطوة 2: إرسال الرسالة الفعلية إلى القناة ليراها الجميع
         await interaction.channel.send(messageToSay);
     },
 };
