@@ -1,19 +1,29 @@
 {
   "name": "tt",
   "version": "1.0.0",
+  "description": "",
   "main": "index.js",
   "scripts": {
+    "start": "node .",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "",
   "dependencies": {
     "@discordjs/builders": "^1.11.3",
     "@google/generative-ai": "^0.24.1",
     "@huggingface/inference": "^4.4.0",
     "discord.js": "^14.22.0",
     "dotenv": "^17.2.0"
-  }
+  },
+  "devDependencies": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/owoVoidX/alabd-bot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/owoVoidX/alabd-bot/issues"
+  },
+  "homepage": "https://github.com/owoVoidX/alabd-bot#readme"
 }
